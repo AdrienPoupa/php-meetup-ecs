@@ -1,0 +1,34 @@
+image: docker:18-git
+
+variables:
+  NGINX_REPOSITORY: 413903005957.dkr.ecr.us-east-1.amazonaws.com/url-shortener-nginx
+  PHP_REPOSITORY: 413903005957.dkr.ecr.us-east-1.amazonaws.com/url-shortener-php
+  # Fix for Cannot connect to the Docker daemon https://gitlab.com/gitlab-org/gitlab-foss/issues/64959
+  DOCKER_TLS_CERTDIR: ""
+
+services:
+  - docker:18-dind
+
+before_script:
+  - apk add --no-cache curl jq python py-pip gettext
+  - pip install awscli
+
+stages:
+  - build
+
+deploy to production:
+  stage: build
+  script:
+    - envsubst < .env.ci > .env
+    - $(aws ecr get-login --no-include-email --region us-east-1)
+    - docker build -f docker/php/prod.Dockerfile -t url-shortener-php:latest .
+    - docker tag url-shortener-php:latest $PHP_REPOSITORY:latest
+    - docker push $PHP_REPOSITORY:latest
+    - docker build -f docker/nginx/Dockerfile -t url-shortener-nginx:latest .
+    - docker tag url-shortener-nginx:latest $NGINX_REPOSITORY:latest
+    - docker push $NGINX_REPOSITORY:latest
+    - aws ecs update-service --cluster url-shortener-prod  --service url-shortener-prod-service --force-new-deployment --region us-east-1
+  only:
+    - master
+  tags:
+    - docker
